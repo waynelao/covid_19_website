@@ -1,0 +1,100 @@
+body {
+    font: 0.8rem Arial;
+}
+
+.selection {
+    display: flex;
+    min-height: 65px;
+    visibility: hidden;
+}
+
+.selection div {
+    display: flex;
+}
+
+.selection select {
+    height: 1.6rem;
+    border: 1px solid #ccc;
+    background-color: #ffffff;
+    font-size: 1rem;
+}
+
+.selection label {
+    line-height: 1.6rem;
+    font-weight: bold;
+    margin: 0 10px 0;
+}
+
+.loaded .selection {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    visibility: visible;
+}
+
+.chart,
+.loading {
+    width: 1200px;
+    height: 628px;
+    max-width: 100%;
+}
+
+.loading {
+    position: absolute;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    font-size: 1.5rem;
+}
+
+.loaded .loading {
+    display: none;
+}
+
+path.country1 {
+    stroke: steelblue;
+    stroke-width: 2;
+    fill: none;
+}
+
+.legend.country1 {
+    fill: steelblue;
+}
+
+
+path.country2 {
+    stroke: blueviolet;
+    stroke-width: 2;
+    fill: none;
+}
+
+.legend.country2 {
+    fill: blueviolet;
+}
+
+
+
+.axis path,
+.axis line {
+    fill: none;
+    stroke: grey;
+    stroke-width: 1;
+    shape-rendering: crispEdges;
+}
+
+@media screen and (max-width: 650px) {
+
+    .chart,
+    .loading {
+        height: auto;
+        min-height: 100px;
+    }
+
+    .selection div {
+        flex-direction: column;
+    }
+
+    .selection label {
+        margin: 10px 0;
+    }
+}
