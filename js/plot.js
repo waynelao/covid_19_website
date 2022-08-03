@@ -3,12 +3,10 @@ const country2Default = "Italy";
 const maxDateDefault = new Date();
 
 const dataUrl = "https://coronavirus-tracker-api.herokuapp.com/v2";
-const countryIdMap = new Map();
 
-function daysCalculation() {
+function daysCalculation(date) {
     var date1 = new Date("01/22/2020");
-    var date2 = new Date();
-    var differentTimes = date2 - date1;
+    var differentTimes = date - date1;
     return Math.floor(differentTimes / (1000*3600*24));
 }
 
@@ -27,7 +25,10 @@ function fetchData(url) {
 function downloadLocationData() {
     const locationsUrl = dataUrl + "/locations";
     return fetchData(locationsUrl).catch((error) => {
-        console.log("Locations data can not be fetched!");
+        console.log("API locations data can not be fetched! Use backup.json instead!");
+        return d3.json("backup.json").catch((error) =>{
+        console.log("There is no dataset available!");
+        });
     });
 }
 
@@ -41,13 +42,28 @@ async function setupSelections(chartConfig) {
     const country2Select = document.getElementById("country2");
     const dateSlider = document.getElementById("endDate");
     dateSlider.min = 0;
-    dateSlider.max = daysCalculation();
     dateSlider.step = 1;
-    dateSlider.value = daysCalculation();
+
+
+    // Note: We're using rawData.confirmed to construct select lists even though the user can specify deaths.
+    const countryData = await downloadLocationData().then((data) => {
+        //console.log(data);
+        covid19Data = data.locations.filter((l) => !l.province);
+        return data.locations.filter((l) => !l.province)
+                //.sort((a, b) => (a.country.localeCompare(b.country)));
+    })
+                /*.filter((l) => !l.province)
+                .map((l) => l.country)
+                .sort((a, b) => a.localeCompare(b)); */
+
+    // console.log(countryData);
+    dateSlider.max = daysCalculation(new Date(countryData[0].last_updated));
+    dateSlider.value = daysCalculation(new Date(countryData[0].last_updated));
+
 
     const addChangeListener = (element) => {
         element.addEventListener("change", (event) => {
-        updateChart(chartConfig, country1Select, country2Select, dateSlider);
+        updateChart(chartConfig, country1Select, country2Select, dateSlider, countryData);
         });
     };
 
@@ -55,21 +71,7 @@ async function setupSelections(chartConfig) {
     addChangeListener(deathsRadio);
     addChangeListener(dateSlider);
 
-    // Note: We're using rawData.confirmed to construct select lists even though the user can specify deaths.
-    const countries = await downloadLocationData().then((data) => {
-        data.locations.filter((l) => !l.province);
-        // console.log(data.locations[0]);
-        for (var key in data.locations) {
-            countryIdMap.set(data.locations[key].country, data.locations[key].id);
-        }
-        return data.locations.map((l) => l.country);
-                //.sort((a, b) => (a.country.localeCompare(b.country)));
-    })
-                /*.filter((l) => !l.province)
-                .map((l) => l.country)
-                .sort((a, b) => a.localeCompare(b)); */
-
-    // console.log(countryIdMap);
+    const countries = countryData.map((l) => l.country);
 
     for (let countryName of countries) {
         const el = document.createElement("option");
@@ -92,7 +94,7 @@ async function setupSelections(chartConfig) {
     addChangeListener(country1Select);
     addChangeListener(country2Select);
 
-    return { country1Select, country2Select, dateSlider };
+    return { country1Select, country2Select, dateSlider, countryData };
 }
 
 function setupChart() {
@@ -119,33 +121,30 @@ function setupChart() {
     return { svg, x, y, width, height };
 }
 
-async function gatherChartData(type, country1, country2, maxDate) {
+function gatherChartData(type, country1, country2, maxDate, countryData) {
 
     let maxCount = null;
+    // console.log(countryData);
 
-    const countries = await Promise.all([country1, country2].map(async (country) => {
-        const countryDataUrl = dataUrl + "/locations/" + countryIdMap.get(country);
-        const countryData = await fetchData(countryDataUrl).then((data) => {
-            // console.log(data.location.timelines[type].timeline);
-            const dateCountMap = data.location.timelines[type].timeline;
-            return Object.keys(dateCountMap)
-                       .map((k) => {
-                        // console.log(k);
-                        const date = d3.timeParse("%Y-%m-%dT%H:%M:%SZ")(k);
-                        const count = dateCountMap[k];
-                        return { date, count };
-                       })
-                       .filter((data) => data.date < maxDate);
-        });
-        // console.log(countryData);
+    const countries = [country1, country2].map((country) => {
+          const cData = countryData.find((d) => d.country === country).timelines[type].timeline;
+          const data = Object.keys(cData)
+            .map((k) => {
+              const date = d3.timeParse("%Y-%m-%dT%H:%M:%SZ")(k);
+              const count = cData[k];
 
-        if (!maxCount || maxCount < countryData[countryData.length - 1].count) {
-            maxCount = countryData[countryData.length - 1].count;
-        }
-        // console.log(data[0]);
+              if (date < maxDate) {
+                if (!maxCount || maxCount < count) {
+                  maxCount = count;
+                }
+              }
 
-        return { country, countryData };
-    }));
+              return { date, count };
+            })
+            .filter((d) => d.date < maxDate);
+
+          return { country, data };
+    });
 
     const chartData = { maxDate, maxCount, countries };
 
@@ -157,10 +156,11 @@ async function gatherChartData(type, country1, country2, maxDate) {
 function renderData(chartConfig, chartData) {
 // Remove any previous lines
 d3.selectAll("g > *").remove();
+// console.log(chartData);
 
 // Scale the range of the data
 chartConfig.x.domain(
-    d3.extent(chartData.countries[0].countryData, function (d) {
+    d3.extent(chartData.countries[0].data, function (d) {
     return d.date;
     })
 );
@@ -169,7 +169,7 @@ chartConfig.y.domain([0, chartData.maxCount]);
 
 // Define the scale parameter for each axis
 const xScale = d3.scaleLinear()
-               .domain([chartData.countries[0].countryData[0].date, chartData.countries[0].countryData[chartData.countries[0].countryData.length - 1].date])
+               .domain([chartData.countries[0].data[0].date, chartData.countries[0].data[chartData.countries[0].data.length - 1].date])
                .range([0, chartConfig.width]);
 
 const yScale = d3.scaleLinear()
@@ -182,7 +182,7 @@ const yScale = d3.scaleLinear()
 
 // Add line for each country
 for (let i = 0; i < chartData.countries.length; i++) {
-    const countryData = chartData.countries[i].countryData;
+    const timelineData = chartData.countries[i].data;
 
     // Build the line
     const line = d3
@@ -199,18 +199,18 @@ for (let i = 0; i < chartData.countries.length; i++) {
     // Add the line to the chart
     chartConfig.svg
     .append("path")
-    .datum(countryData)
+    .datum(timelineData)
     .attr("class", `line country${(i + 1).toString()}`)
     .attr("d", line);
 
     // Add legend
     chartConfig.svg
     .append("text")
-    .attr("transform", "translate(" + (chartConfig.width + 3) + "," + chartConfig.y(countryData[countryData.length - 1].count) + ")")
+    .attr("transform", "translate(" + (chartConfig.width + 3) + "," + chartConfig.y(timelineData[timelineData.length - 1].count) + ")")
     .attr("dy", ".35em")
     .attr("text-anchor", "start")
     .attr("class", `legend country${(i + 1).toString()}`)
-    .text(`${chartData.countries[i].country} (${chartData.countries[i].countryData[chartData.countries[i].countryData.length - 1].count.toLocaleString()})`);
+    .text(`${chartData.countries[i].country} (${chartData.countries[i].data[chartData.countries[i].data.length - 1].count.toLocaleString()})`);
 
     /* add tooltip
     const focus = chartConfig.svg
@@ -362,8 +362,8 @@ mouseG.append('svg:rect')
         // console.log(d);
         var xDate = xScale.invert(mouse[0]),
             bisect = d3.bisector(d => d.date).left;
-            idx = bisect(d.countryData, xDate);
-            point = d.countryData[idx];
+            idx = bisect(d.data, xDate);
+            point = d.data[idx];
         // console.log(xDate);
         // console.log(idx);
         // update the text with y value
@@ -419,7 +419,7 @@ chartConfig.svg.append("line")
 
 
 
-async function updateChart(chartConfig, country1Select, country2Select, dateSlider) {
+function updateChart(chartConfig, country1Select, country2Select, dateSlider, countryData) {
     const type = document.querySelector('input[name="type"]:checked').value;
     const country1 = country1Select.options[country1Select.selectedIndex].value;
     const country2 = country2Select.options[country2Select.selectedIndex].value;
@@ -435,7 +435,7 @@ async function updateChart(chartConfig, country1Select, country2Select, dateSlid
 
     endDate.innerHTML = maxDate.toDateString();
 
-    const chartData = await gatherChartData(type, country1, country2, maxDate);
+    const chartData = gatherChartData(type, country1, country2, maxDate, countryData);
 
     renderData(chartConfig, chartData);
 }
@@ -449,11 +449,11 @@ function addDays(date, days) {
 document.addEventListener("DOMContentLoaded", async (event) => {
     
     const chartConfig = setupChart();
-    const { country1Select, country2Select, dateSlider } = await setupSelections(chartConfig);
+    const { country1Select, country2Select, dateSlider, countryData } = await setupSelections(chartConfig);
     // console.log(country1Select);
 
     // Initially render the chart
-    updateChart(chartConfig, country1Select, country2Select, dateSlider);
+    updateChart(chartConfig, country1Select, country2Select, dateSlider, countryData);
 
     document.body.classList.add("loaded");
 });
