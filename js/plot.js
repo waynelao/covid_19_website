@@ -2,7 +2,7 @@ const country1Default = "US";
 const country2Default = "Italy";
 const maxDateDefault = new Date();
 
-const dataUrl = "https://coronavirus-tracker-api.herokuapp.com/v2";
+const dataUrl = "https://coronavirus-tracker-api.herokuapp.com/all";
 
 function daysCalculation(date) {
     var date1 = new Date("01/22/2020");
@@ -23,10 +23,9 @@ function fetchData(url) {
 
 
 function downloadLocationData() {
-    const locationsUrl = dataUrl + "/locations";
-    return fetchData(locationsUrl).catch((error) => {
+    return fetchData(dataUrl).catch((error) => {
         console.log("API locations data can not be fetched! Use backup.json instead!");
-        return d3.json("backup.json").catch((error) =>{
+        return d3.json("covid_19_0804.json").catch((error) =>{
         console.log("There is no dataset available!");
         });
     });
@@ -35,7 +34,7 @@ function downloadLocationData() {
 
 
 
-async function setupSelections(chartConfig) {
+function setupSelections(chartConfig, rawData) {
     const confirmedRadio = document.getElementById("confirmed");
     const deathsRadio = document.getElementById("deaths");
     const country1Select = document.getElementById("country1");
@@ -43,27 +42,19 @@ async function setupSelections(chartConfig) {
     const dateSlider = document.getElementById("endDate");
     dateSlider.min = 0;
     dateSlider.step = 1;
+    // console.log(rawData);
+    // console.log(daysCalculation(new Date(rawData.confirmed.last_updated)));
+    dateSlider.max = daysCalculation(new Date(rawData.confirmed.last_updated));
+    dateSlider.value = daysCalculation(new Date(rawData.confirmed.last_updated));
 
 
     // Note: We're using rawData.confirmed to construct select lists even though the user can specify deaths.
-    const countryData = await downloadLocationData().then((data) => {
-        //console.log(data);
-        covid19Data = data.locations.filter((l) => !l.province);
-        return data.locations.filter((l) => !l.province)
-                //.sort((a, b) => (a.country.localeCompare(b.country)));
-    })
-                /*.filter((l) => !l.province)
-                .map((l) => l.country)
-                .sort((a, b) => a.localeCompare(b)); */
-
-    // console.log(countryData);
-    dateSlider.max = daysCalculation(new Date(countryData[0].last_updated));
-    dateSlider.value = daysCalculation(new Date(countryData[0].last_updated));
+    
 
 
     const addChangeListener = (element) => {
         element.addEventListener("change", (event) => {
-        updateChart(chartConfig, country1Select, country2Select, dateSlider, countryData);
+        updateChart(chartConfig, country1Select, country2Select, dateSlider, rawData);
         });
     };
 
@@ -71,7 +62,11 @@ async function setupSelections(chartConfig) {
     addChangeListener(deathsRadio);
     addChangeListener(dateSlider);
 
-    const countries = countryData.map((l) => l.country);
+    const countries = rawData.confirmed.locations
+          .filter((l) => !l.province)
+          .map((l) => l.country)
+          .sort((a, b) => a.localeCompare(b));
+    // console.log(countries);
 
     for (let countryName of countries) {
         const el = document.createElement("option");
@@ -94,7 +89,7 @@ async function setupSelections(chartConfig) {
     addChangeListener(country1Select);
     addChangeListener(country2Select);
 
-    return { country1Select, country2Select, dateSlider, countryData };
+    return { country1Select, country2Select, dateSlider};
 }
 
 function setupChart() {
@@ -121,17 +116,18 @@ function setupChart() {
     return { svg, x, y, width, height };
 }
 
-function gatherChartData(type, country1, country2, maxDate, countryData) {
+function gatherChartData(type, country1, country2, maxDate, rawData) {
 
     let maxCount = null;
-    // console.log(countryData);
+    const sourceData = rawData[type];
+    // console.log(sourceData);
 
     const countries = [country1, country2].map((country) => {
-          const cData = countryData.find((d) => d.country === country).timelines[type].timeline;
+          const cData = sourceData.locations.find((d) => d.country === country && !d.province).history;
           const data = Object.keys(cData)
             .map((k) => {
-              const date = d3.timeParse("%Y-%m-%dT%H:%M:%SZ")(k);
-              const count = cData[k];
+              const date = d3.timeParse("%m/%d/%y")(k);
+              const count = +cData[k];
 
               if (date < maxDate) {
                 if (!maxCount || maxCount < count) {
@@ -141,7 +137,8 @@ function gatherChartData(type, country1, country2, maxDate, countryData) {
 
               return { date, count };
             })
-            .filter((d) => d.date < maxDate);
+            .filter((d) => d.date < maxDate)
+            .sort((a, b) => a.date - b.date);
 
           return { country, data };
     });
@@ -419,7 +416,7 @@ chartConfig.svg.append("line")
 
 
 
-function updateChart(chartConfig, country1Select, country2Select, dateSlider, countryData) {
+function updateChart(chartConfig, country1Select, country2Select, dateSlider, rawData) {
     const type = document.querySelector('input[name="type"]:checked').value;
     const country1 = country1Select.options[country1Select.selectedIndex].value;
     const country2 = country2Select.options[country2Select.selectedIndex].value;
@@ -435,7 +432,7 @@ function updateChart(chartConfig, country1Select, country2Select, dateSlider, co
 
     endDate.innerHTML = maxDate.toDateString();
 
-    const chartData = gatherChartData(type, country1, country2, maxDate, countryData);
+    const chartData = gatherChartData(type, country1, country2, maxDate, rawData);
 
     renderData(chartConfig, chartData);
 }
@@ -446,14 +443,16 @@ function addDays(date, days) {
     return new Date(result);
 }
 
-document.addEventListener("DOMContentLoaded", async (event) => {
-    
-    const chartConfig = setupChart();
-    const { country1Select, country2Select, dateSlider, countryData } = await setupSelections(chartConfig);
-    // console.log(country1Select);
+document.addEventListener("DOMContentLoaded", (event) => {
+    downloadLocationData().then((rawData) => {
+      const chartConfig = setupChart();
+      // console.log(rawData.confirmed);
+      const { country1Select, country2Select, dateSlider} = setupSelections(chartConfig, rawData);
 
-    // Initially render the chart
-    updateChart(chartConfig, country1Select, country2Select, dateSlider, countryData);
+      // Initially render the chart
+      updateChart(chartConfig, country1Select, country2Select, dateSlider, rawData);
 
-    document.body.classList.add("loaded");
+      document.body.classList.add("loaded");
+
+    });
 });
